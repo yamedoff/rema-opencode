@@ -752,6 +752,75 @@ function createEventResponse(chunks: unknown[], includeDone = false) {
 }
 
 describe("session.llm.stream", () => {
+  const alibabaQwenFixture = { providerID: "alibaba", modelID: "qwen-plus" }
+
+  it.instance(
+    "streams through Rema mock transport when enabled",
+    () =>
+      Effect.gen(function* () {
+        const previous = process.env.REMA_TRANSPORT
+        process.env.REMA_TRANSPORT = "mock"
+        try {
+          const fixture = loadFixture(alibabaQwenFixture.providerID, alibabaQwenFixture.modelID)
+          const resolved = yield* Provider.use.getModel(
+            ProviderV2.ID.make(alibabaQwenFixture.providerID),
+            ProviderV2.ModelID.make(fixture.model.id),
+          )
+          const sessionID = SessionID.make("session-test-rema-mock")
+          const agent = {
+            name: "test",
+            mode: "primary",
+            options: {},
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          } satisfies Agent.Info
+          const user = {
+            id: MessageID.make("msg_user-rema-mock"),
+            sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: agent.name,
+            model: { providerID: ProviderV2.ID.make(alibabaQwenFixture.providerID), modelID: resolved.id },
+          } satisfies SessionV1.User
+
+          const events = yield* LLM.Service.use((svc) =>
+            svc
+              .stream({
+                user,
+                sessionID,
+                model: resolved,
+                agent,
+                system: ["You are a helpful assistant."],
+                messages: [{ role: "user", content: "Hello" }],
+                tools: {},
+              })
+              .pipe(Stream.runCollect, Effect.map((chunk) => Array.from(chunk))),
+          )
+
+          expect(events).toMatchObject([
+            {
+              type: "text-delta",
+              id: "rema-mock-session-test-rema-mock",
+              text: "Rema transport mock is connected. Replace this mock stream with authenticated Rema AgentOS SSE.",
+            },
+            { type: "finish", reason: "stop" },
+          ])
+        } finally {
+          if (previous === undefined) delete process.env.REMA_TRANSPORT
+          else process.env.REMA_TRANSPORT = previous
+        }
+      }),
+    {
+      config: () => ({
+        enabled_providers: [alibabaQwenFixture.providerID],
+        provider: {
+          [alibabaQwenFixture.providerID]: {
+            options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
+          },
+        },
+      }),
+    },
+  )
+
   const vivgridFixture = { providerID: "vivgrid", modelID: "gemini-3.1-pro-preview" }
   it.instance(
     "sends temperature, tokens, and reasoning options for openai-compatible models",
@@ -832,7 +901,6 @@ describe("session.llm.stream", () => {
     },
   )
 
-  const alibabaQwenFixture = { providerID: "alibaba", modelID: "qwen-plus" }
   it.instance(
     "service stream cancellation cancels provider response body promptly",
     () =>

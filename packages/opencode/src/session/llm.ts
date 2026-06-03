@@ -59,6 +59,24 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/LL
 
 export const use = serviceUse(Service)
 
+function remaMockTransportEnabled() {
+  return process.env.REMA_TRANSPORT === "mock" || process.env.OPENCODE_REMA_TRANSPORT === "mock"
+}
+
+function remaMockStream(input: StreamRequest): Stream.Stream<LLMEvent> {
+  return Stream.fromIterable([
+    {
+      type: "text-delta",
+      id: `rema-mock-${input.sessionID}`,
+      text: "Rema transport mock is connected. Replace this mock stream with authenticated Rema AgentOS SSE.",
+    },
+    {
+      type: "finish",
+      reason: "stop",
+    },
+  ] satisfies LLMEvent[])
+}
+
 const live: Layer.Layer<
   Service,
   never,
@@ -95,6 +113,21 @@ const live: Layer.Layer<
         modelID: input.model.id,
         providerID: input.model.providerID,
       })
+
+      if (remaMockTransportEnabled()) {
+        yield* Effect.logInfo("llm runtime selected").pipe(
+          Effect.annotateLogs({
+            "llm.runtime": "rema-mock",
+            "llm.provider": input.model.providerID,
+            "llm.model": input.model.id,
+          }),
+        )
+        l.info("using Rema mock transport")
+        return {
+          type: "rema" as const,
+          stream: remaMockStream(input),
+        }
+      }
 
       const [language, cfg, item, info] = yield* Effect.all(
         [
@@ -363,6 +396,7 @@ const live: Layer.Layer<
 
             const result = yield* run({ ...input, abort: ctrl.signal })
 
+            if (result.type === "rema") return result.stream
             if (result.type === "native") return result.stream
 
             // Adapter seam: both runtimes expose the same LLMEvent stream. Native
