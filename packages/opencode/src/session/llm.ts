@@ -71,6 +71,24 @@ function remaBridgeUrl() {
   return (process.env.REMA_BRIDGE_URL || process.env.OPENCODE_REMA_BRIDGE_URL || "").trim().replace(/\/+$/, "")
 }
 
+function remaBridgeHeaders() {
+  const headers: Record<string, string> = {
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  }
+  const cookie = (process.env.REMA_BRIDGE_COOKIE || process.env.OPENCODE_REMA_BRIDGE_COOKIE || "").trim()
+  const authorization = (
+    process.env.REMA_BRIDGE_AUTHORIZATION ||
+    process.env.OPENCODE_REMA_BRIDGE_AUTHORIZATION ||
+    ""
+  ).trim()
+
+  if (cookie) headers.Cookie = cookie
+  if (authorization) headers.Authorization = authorization
+
+  return headers
+}
+
 function remaMockStream(input: StreamRequest): Stream.Stream<LLMEvent> {
   return Stream.fromIterable([
     {
@@ -95,6 +113,7 @@ const REMA_CONTENT_EVENTS = new Set([
   "workflowcompletedevent",
 ])
 const REMA_COMPLETION_EVENTS = new Set(["runcompleted", "runcompletedevent", "workflowcompleted", "workflowcompletedevent"])
+const REMA_ERROR_EVENTS = new Set(["runerror", "runerrorevent"])
 
 function extractRemaTextDelta(payload: unknown) {
   if (typeof payload === "string") return payload
@@ -128,6 +147,29 @@ function parseJsonSafely(value: string): unknown {
   }
 }
 
+function extractRemaErrorMessage(payload: unknown) {
+  if (typeof payload === "string" && payload.trim()) return payload.trim()
+  if (!payload || typeof payload !== "object") return "Rema bridge stream failed"
+
+  let current = payload
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== "object") break
+    const record = current as Record<string, unknown>
+    const message = [record.message, record.detail, record.error_description].find(
+      (item): item is string => typeof item === "string" && item.trim().length > 0,
+    )
+    if (message) return message.trim()
+
+    const nested = [record.data, record.error, record.payload].find(
+      (item): item is Record<string, unknown> => !!item && typeof item === "object",
+    )
+    if (!nested) break
+    current = nested
+  }
+
+  return "Rema bridge stream failed"
+}
+
 function latestUserText(messages: ModelMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -153,10 +195,7 @@ async function* remaBridgeEvents(input: StreamRequest): AsyncIterable<LLMEvent> 
 
   const response = await fetch(bridgeUrl, {
     method: "POST",
-    headers: {
-      Accept: "text/event-stream",
-      "Content-Type": "application/json",
-    },
+    headers: remaBridgeHeaders(),
     signal: input.abort,
     body: JSON.stringify({
       message,
@@ -176,6 +215,7 @@ async function* remaBridgeEvents(input: StreamRequest): AsyncIterable<LLMEvent> 
   const decoder = new TextDecoder()
   let buffer = ""
   let completed = false
+  let streamedText = ""
 
   const processFrame = function* (frame: string): Generator<LLMEvent> {
     let eventName = ""
@@ -206,14 +246,29 @@ async function* remaBridgeEvents(input: StreamRequest): AsyncIterable<LLMEvent> 
     const normalizedEvent = eventName || "message"
     const payload = parseJsonSafely(rawData)
 
+    if (REMA_ERROR_EVENTS.has(normalizedEvent)) {
+      throw new Error(extractRemaErrorMessage(payload))
+    }
+
     if (REMA_CONTENT_EVENTS.has(normalizedEvent)) {
       const text = extractRemaTextDelta(payload)
       if (text) {
-        yield {
-          type: "text-delta",
-          id: `rema-${input.sessionID}`,
-          text,
-        } satisfies LLMEvent
+        const isSnapshot = REMA_COMPLETION_EVENTS.has(normalizedEvent)
+        const appendText =
+          text.startsWith(streamedText)
+            ? text.slice(streamedText.length)
+            : streamedText.startsWith(text) || isSnapshot
+              ? ""
+              : text
+
+        if (appendText) {
+          streamedText += appendText
+          yield {
+            type: "text-delta",
+            id: `rema-${input.sessionID}`,
+            text: appendText,
+          } satisfies LLMEvent
+        }
       }
     }
 
@@ -247,7 +302,7 @@ async function* remaBridgeEvents(input: StreamRequest): AsyncIterable<LLMEvent> 
   }
 
   if (!completed) {
-    yield { type: "finish", reason: "stop" } satisfies LLMEvent
+    throw new Error("Rema bridge stream ended before completion")
   }
 }
 

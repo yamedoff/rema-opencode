@@ -827,8 +827,10 @@ describe("session.llm.stream", () => {
       Effect.gen(function* () {
         const previousTransport = process.env.REMA_TRANSPORT
         const previousBridgeUrl = process.env.REMA_BRIDGE_URL
+        const previousBridgeCookie = process.env.REMA_BRIDGE_COOKIE
         process.env.REMA_TRANSPORT = "bridge"
         process.env.REMA_BRIDGE_URL = `${state.server!.url.origin}/api/internal/opencode/run`
+        process.env.REMA_BRIDGE_COOKIE = "rema_auth_jwt=test-jwt"
         try {
           const request = waitRequest(
             "/api/internal/opencode/run",
@@ -885,6 +887,7 @@ describe("session.llm.stream", () => {
             sessionId: "session-test-rema-bridge",
           })
           expect(captured.headers.get("accept")).toBe("text/event-stream")
+          expect(captured.headers.get("cookie")).toBe("rema_auth_jwt=test-jwt")
           expect(events).toMatchObject([
             {
               type: "text-delta",
@@ -898,6 +901,174 @@ describe("session.llm.stream", () => {
             },
             { type: "finish", reason: "stop" },
           ])
+        } finally {
+          if (previousTransport === undefined) delete process.env.REMA_TRANSPORT
+          else process.env.REMA_TRANSPORT = previousTransport
+          if (previousBridgeUrl === undefined) delete process.env.REMA_BRIDGE_URL
+          else process.env.REMA_BRIDGE_URL = previousBridgeUrl
+          if (previousBridgeCookie === undefined) delete process.env.REMA_BRIDGE_COOKIE
+          else process.env.REMA_BRIDGE_COOKIE = previousBridgeCookie
+        }
+      }),
+    {
+      config: () => ({
+        enabled_providers: [alibabaQwenFixture.providerID],
+        provider: {
+          [alibabaQwenFixture.providerID]: {
+            options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
+          },
+        },
+      }),
+    },
+  )
+
+  it.instance(
+    "merges Rema completion snapshots without duplicating streamed text",
+    () =>
+      Effect.gen(function* () {
+        const previousTransport = process.env.REMA_TRANSPORT
+        const previousBridgeUrl = process.env.REMA_BRIDGE_URL
+        process.env.REMA_TRANSPORT = "bridge"
+        process.env.REMA_BRIDGE_URL = `${state.server!.url.origin}/api/internal/opencode/run`
+        try {
+          const request = waitRequest(
+            "/api/internal/opencode/run",
+            new Response(
+              [
+                'event: RunContent\ndata: {"content":"Hello"}',
+                'event: RunCompleted\ndata: {"content":"Hello world"}',
+              ].join("\n\n") + "\n\n",
+              {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream" },
+              },
+            ),
+          )
+          const fixture = loadFixture(alibabaQwenFixture.providerID, alibabaQwenFixture.modelID)
+          const resolved = yield* Provider.use.getModel(
+            ProviderV2.ID.make(alibabaQwenFixture.providerID),
+            ProviderV2.ModelID.make(fixture.model.id),
+          )
+          const sessionID = SessionID.make("session-test-rema-snapshot")
+          const agent = {
+            name: "test",
+            mode: "primary",
+            options: {},
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          } satisfies Agent.Info
+          const user = {
+            id: MessageID.make("msg_user-rema-snapshot"),
+            sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: agent.name,
+            model: { providerID: ProviderV2.ID.make(alibabaQwenFixture.providerID), modelID: resolved.id },
+          } satisfies SessionV1.User
+
+          const events = yield* LLM.Service.use((svc) =>
+            svc
+              .stream({
+                user,
+                sessionID,
+                model: resolved,
+                agent,
+                system: ["You are a helpful assistant."],
+                messages: [{ role: "user", content: "Hello Rema" }],
+                tools: {},
+              })
+              .pipe(Stream.runCollect, Effect.map((chunk) => Array.from(chunk))),
+          )
+          yield* Effect.promise(() => request)
+
+          expect(events).toMatchObject([
+            {
+              type: "text-delta",
+              id: "rema-session-test-rema-snapshot",
+              text: "Hello",
+            },
+            {
+              type: "text-delta",
+              id: "rema-session-test-rema-snapshot",
+              text: " world",
+            },
+            { type: "finish", reason: "stop" },
+          ])
+        } finally {
+          if (previousTransport === undefined) delete process.env.REMA_TRANSPORT
+          else process.env.REMA_TRANSPORT = previousTransport
+          if (previousBridgeUrl === undefined) delete process.env.REMA_BRIDGE_URL
+          else process.env.REMA_BRIDGE_URL = previousBridgeUrl
+        }
+      }),
+    {
+      config: () => ({
+        enabled_providers: [alibabaQwenFixture.providerID],
+        provider: {
+          [alibabaQwenFixture.providerID]: {
+            options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
+          },
+        },
+      }),
+    },
+  )
+
+  it.instance(
+    "fails Rema bridge transport on 200-level run error events",
+    () =>
+      Effect.gen(function* () {
+        const previousTransport = process.env.REMA_TRANSPORT
+        const previousBridgeUrl = process.env.REMA_BRIDGE_URL
+        process.env.REMA_TRANSPORT = "bridge"
+        process.env.REMA_BRIDGE_URL = `${state.server!.url.origin}/api/internal/opencode/run`
+        try {
+          const request = waitRequest(
+            "/api/internal/opencode/run",
+            new Response('event: RunErrorEvent\ndata: {"data":{"message":"workflow failed"}}\n\n', {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            }),
+          )
+          const fixture = loadFixture(alibabaQwenFixture.providerID, alibabaQwenFixture.modelID)
+          const resolved = yield* Provider.use.getModel(
+            ProviderV2.ID.make(alibabaQwenFixture.providerID),
+            ProviderV2.ModelID.make(fixture.model.id),
+          )
+          const sessionID = SessionID.make("session-test-rema-run-error")
+          const agent = {
+            name: "test",
+            mode: "primary",
+            options: {},
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          } satisfies Agent.Info
+          const user = {
+            id: MessageID.make("msg_user-rema-run-error"),
+            sessionID,
+            role: "user",
+            time: { created: Date.now() },
+            agent: agent.name,
+            model: { providerID: ProviderV2.ID.make(alibabaQwenFixture.providerID), modelID: resolved.id },
+          } satisfies SessionV1.User
+
+          const exit = yield* LLM.Service.use((svc) =>
+            svc
+              .stream({
+                user,
+                sessionID,
+                model: resolved,
+                agent,
+                system: ["You are a helpful assistant."],
+                messages: [{ role: "user", content: "Hello Rema" }],
+                tools: {},
+              })
+              .pipe(Stream.runDrain, Effect.exit),
+          )
+          yield* Effect.promise(() => request)
+
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            const failure = Cause.pretty(exit.cause)
+            expect(failure).toContain("workflow failed")
+          }
         } finally {
           if (previousTransport === undefined) delete process.env.REMA_TRANSPORT
           else process.env.REMA_TRANSPORT = previousTransport
