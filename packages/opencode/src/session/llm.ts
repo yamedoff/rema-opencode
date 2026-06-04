@@ -63,6 +63,14 @@ function remaMockTransportEnabled() {
   return process.env.REMA_TRANSPORT === "mock" || process.env.OPENCODE_REMA_TRANSPORT === "mock"
 }
 
+function remaBridgeTransportEnabled() {
+  return process.env.REMA_TRANSPORT === "bridge" || process.env.OPENCODE_REMA_TRANSPORT === "bridge"
+}
+
+function remaBridgeUrl() {
+  return (process.env.REMA_BRIDGE_URL || process.env.OPENCODE_REMA_BRIDGE_URL || "").trim().replace(/\/+$/, "")
+}
+
 function remaMockStream(input: StreamRequest): Stream.Stream<LLMEvent> {
   return Stream.fromIterable([
     {
@@ -75,6 +83,176 @@ function remaMockStream(input: StreamRequest): Stream.Stream<LLMEvent> {
       reason: "stop",
     },
   ] satisfies LLMEvent[])
+}
+
+const REMA_CONTENT_EVENTS = new Set([
+  "runcontent",
+  "runcontentevent",
+  "stepoutput",
+  "runcompleted",
+  "runcompletedevent",
+  "workflowcompleted",
+  "workflowcompletedevent",
+])
+const REMA_COMPLETION_EVENTS = new Set(["runcompleted", "runcompletedevent", "workflowcompleted", "workflowcompletedevent"])
+
+function extractRemaTextDelta(payload: unknown) {
+  if (typeof payload === "string") return payload
+  if (!payload || typeof payload !== "object") return ""
+
+  const record = payload as Record<string, unknown>
+  const nestedCandidates = [record.content, record.step_output, record.stepOutput, record.step_response, record.stepResponse]
+
+  for (const candidate of nestedCandidates) {
+    if (typeof candidate === "string" && candidate.length > 0) return candidate
+    if (candidate && typeof candidate === "object") {
+      const nested = candidate as Record<string, unknown>
+      const value = [nested.delta, nested.text, nested.content, nested.response, nested.message].find(
+        (item): item is string => typeof item === "string" && item.length > 0,
+      )
+      if (value) return value
+    }
+  }
+
+  const directValue = [record.delta, record.text, record.response, record.message].find(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  )
+  return directValue ?? ""
+}
+
+function parseJsonSafely(value: string): unknown {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function latestUserText(messages: ModelMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || message.role !== "user") continue
+    if (typeof message.content === "string") return message.content
+    if (Array.isArray(message.content)) {
+      const text = message.content
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .filter(Boolean)
+        .join("\n")
+      if (text) return text
+    }
+  }
+  return ""
+}
+
+async function* remaBridgeEvents(input: StreamRequest): AsyncIterable<LLMEvent> {
+  const bridgeUrl = remaBridgeUrl()
+  if (!bridgeUrl) throw new Error("Missing Rema bridge URL: set REMA_BRIDGE_URL or OPENCODE_REMA_BRIDGE_URL")
+
+  const message = latestUserText(input.messages)
+  if (!message) throw new Error("Rema bridge transport requires a user text message")
+
+  const response = await fetch(bridgeUrl, {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+    },
+    signal: input.abort,
+    body: JSON.stringify({
+      message,
+      sessionId: input.sessionID,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Rema bridge request failed with status ${response.status}`)
+  }
+
+  if (!response.body) {
+    throw new Error("Rema bridge response was empty")
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let completed = false
+
+  const processFrame = function* (frame: string): Generator<LLMEvent> {
+    let eventName = ""
+    const dataLines: string[] = []
+
+    for (const line of frame.split("\n")) {
+      if (!line || line.startsWith(":")) continue
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim().toLowerCase()
+        continue
+      }
+      if (line.startsWith("data:")) {
+        const value = line.slice(5)
+        dataLines.push(value.startsWith(" ") ? value.slice(1) : value)
+      }
+    }
+
+    if (dataLines.length === 0) return
+    const rawData = dataLines.join("\n")
+    if (rawData.trim() === "[DONE]") {
+      if (!completed) {
+        completed = true
+        yield { type: "finish", reason: "stop" } satisfies LLMEvent
+      }
+      return
+    }
+
+    const normalizedEvent = eventName || "message"
+    const payload = parseJsonSafely(rawData)
+
+    if (REMA_CONTENT_EVENTS.has(normalizedEvent)) {
+      const text = extractRemaTextDelta(payload)
+      if (text) {
+        yield {
+          type: "text-delta",
+          id: `rema-${input.sessionID}`,
+          text,
+        } satisfies LLMEvent
+      }
+    }
+
+    if (REMA_COMPLETION_EVENTS.has(normalizedEvent) && !completed) {
+      completed = true
+      yield { type: "finish", reason: "stop" } satisfies LLMEvent
+    }
+  }
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+      buffer = buffer.replace(/\r\n/g, "\n")
+
+      let separatorIndex = buffer.indexOf("\n\n")
+      while (separatorIndex >= 0) {
+        const frame = buffer.slice(0, separatorIndex)
+        buffer = buffer.slice(separatorIndex + 2)
+        yield* processFrame(frame)
+        separatorIndex = buffer.indexOf("\n\n")
+      }
+
+      if (done) {
+        if (buffer.trim()) yield* processFrame(buffer)
+        break
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  if (!completed) {
+    yield { type: "finish", reason: "stop" } satisfies LLMEvent
+  }
+}
+
+function remaBridgeStream(input: StreamRequest): Stream.Stream<LLMEvent, unknown> {
+  return Stream.fromAsyncIterable(remaBridgeEvents(input), (error) => error)
 }
 
 const live: Layer.Layer<
@@ -126,6 +304,21 @@ const live: Layer.Layer<
         return {
           type: "rema" as const,
           stream: remaMockStream(input),
+        }
+      }
+
+      if (remaBridgeTransportEnabled()) {
+        yield* Effect.logInfo("llm runtime selected").pipe(
+          Effect.annotateLogs({
+            "llm.runtime": "rema-bridge",
+            "llm.provider": input.model.providerID,
+            "llm.model": input.model.id,
+          }),
+        )
+        l.info("using Rema bridge transport")
+        return {
+          type: "rema" as const,
+          stream: remaBridgeStream(input),
         }
       }
 
