@@ -14,6 +14,7 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util/filesystem"
+import { remaBridgeModeEnabled, remaModelSelection } from "../../rema-mode"
 
 export function parseModel(model: string) {
   const [providerID, ...rest] = model.split("/")
@@ -160,7 +161,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
 
       const args = useArgs()
+      const remaBridgeModel = () => {
+        const model = remaModelSelection()
+        return remaBridgeModeEnabled() && isModelValid(model) ? model : undefined
+      }
       const fallbackModel = createMemo(() => {
+        const remaModel = remaBridgeModel()
+        if (remaModel) return remaModel
+
         if (args.model) {
           const { providerID, modelID } = parseModel(args.model)
           if (isModelValid({ providerID, modelID })) {
@@ -203,6 +211,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const a = agent.current()
         return (
           getFirstValidModel(
+            remaBridgeModel,
             () => a && modelStore.model[a.name],
             () => a && a.model,
             fallbackModel,

@@ -15,6 +15,8 @@ import { useToast } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
 import { useConnected } from "./use-connected"
 import { useBindings } from "../keymap"
+import { REMA_PROVIDER_ID, remaBridgeModeEnabled, remaModelSelection } from "../../rema-mode"
+import { useLocal } from "@tui/context/local"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -84,6 +86,7 @@ export function createDialogProviderOptions() {
   const dialog = useDialog()
   const sdk = useSDK()
   const toast = useToast()
+  const local = useLocal()
   const { theme } = useTheme()
   const onboarded = useConnected()
 
@@ -139,6 +142,11 @@ export function createDialogProviderOptions() {
           category: provider.category,
           gutter: connected && onboarded() ? () => <text fg={theme.success}>✓</text> : undefined,
           async onSelect() {
+            if (remaBridgeModeEnabled() && providerID === REMA_PROVIDER_ID) {
+              local.model.set(remaModelSelection(), { recent: true })
+              dialog.clear()
+              return
+            }
             if (consoleManaged) return
 
             const methods = sync.data.provider_auth[providerID] ?? [
