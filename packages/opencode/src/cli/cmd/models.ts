@@ -4,6 +4,7 @@ import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { effectCmd, fail } from "../effect-cmd"
 import { UI } from "../ui"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { remaBridgeModeEnabled, remaBridgeModelLines } from "./rema-mode"
 
 export const ModelsCommand = effectCmd({
   command: "models [provider]",
@@ -24,6 +25,16 @@ export const ModelsCommand = effectCmd({
         type: "boolean",
       }),
   handler: Effect.fn("Cli.models")(function* (args) {
+    if (remaBridgeModeEnabled()) {
+      const lines = remaBridgeModelLines({ provider: args.provider, verbose: args.verbose })
+      if (args.provider && lines.length === 0) {
+        return yield* fail(`Provider not available in Rema bridge mode: ${args.provider}`)
+      }
+      for (const line of lines) process.stdout.write(line + EOL)
+      if (args.refresh) UI.println(UI.Style.TEXT_DIM + "Rema bridge mode uses Rema-managed models." + UI.Style.TEXT_NORMAL)
+      return
+    }
+
     const { Provider } = yield* Effect.promise(() => import("@/provider/provider"))
     if (args.refresh) {
       yield* ModelsDev.Service.use((s) => s.refresh(true))
