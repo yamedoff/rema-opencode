@@ -16,6 +16,7 @@ import { Process } from "@/util/process"
 import { errorMessage } from "@/util/error"
 import { text } from "node:stream/consumers"
 import { Effect, Option } from "effect"
+import { REMA_BRIDGE_AUTH_MESSAGE, remaBridgeModeEnabled } from "./rema-mode"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -251,6 +252,14 @@ export const ProvidersListCommand = effectCmd({
   // Lists global credentials + provider env vars; no project instance needed.
   instance: false,
   handler: Effect.fn("Cli.providers.list")(function* (_args) {
+    if (remaBridgeModeEnabled()) {
+      UI.empty()
+      yield* Prompt.intro("Rema bridge")
+      yield* Prompt.log.info(REMA_BRIDGE_AUTH_MESSAGE)
+      yield* Prompt.outro("No provider credentials")
+      return
+    }
+
     const authSvc = yield* Auth.Service
     const modelsDev = yield* ModelsDev.Service
 
@@ -315,6 +324,14 @@ export const ProvidersLoginCommand = effectCmd({
         type: "string",
       }),
   handler: Effect.fn("Cli.providers.login")(function* (args) {
+    if (remaBridgeModeEnabled()) {
+      UI.empty()
+      yield* Prompt.intro("Rema bridge")
+      yield* Prompt.log.info(REMA_BRIDGE_AUTH_MESSAGE)
+      yield* Prompt.outro("No provider login required")
+      return
+    }
+
     const authSvc = yield* Auth.Service
 
     UI.empty()
@@ -491,6 +508,14 @@ export const ProvidersLogoutCommand = effectCmd({
   // Removes a global auth credential; no project instance needed.
   instance: false,
   handler: Effect.fn("Cli.providers.logout")(function* (_args) {
+    if (remaBridgeModeEnabled()) {
+      UI.empty()
+      yield* Prompt.intro("Rema bridge")
+      yield* Prompt.log.info(REMA_BRIDGE_AUTH_MESSAGE)
+      yield* Prompt.outro("No provider logout required")
+      return
+    }
+
     const authSvc = yield* Auth.Service
     const modelsDev = yield* ModelsDev.Service
 

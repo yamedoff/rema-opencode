@@ -6,10 +6,17 @@ import { AccountID, OrgID, PollExpired, type PollResult, type AccountError } fro
 import { effectCmd } from "../effect-cmd"
 import * as Prompt from "../effect/prompt"
 import open from "open"
+import { REMA_BRIDGE_AUTH_MESSAGE, remaBridgeModeEnabled } from "./rema-mode"
 
 const openBrowser = (url: string) => Effect.promise(() => open(url).catch(() => undefined))
 
 const println = (msg: string) => Effect.sync(() => UI.println(msg))
+
+const bridgeAccountNotice = Effect.fn("Cli.account.remaBridgeNotice")(function* () {
+  yield* Prompt.intro("Rema bridge")
+  yield* Prompt.log.info(REMA_BRIDGE_AUTH_MESSAGE)
+  yield* Prompt.outro("Use RemaAI authentication")
+})
 
 const dim = (value: string) => UI.Style.TEXT_DIM + value + UI.Style.TEXT_NORMAL
 
@@ -185,6 +192,7 @@ export const LoginCommand = effectCmd({
     }),
   handler: Effect.fn("Cli.account.login")(function* (args) {
     UI.empty()
+    if (remaBridgeModeEnabled()) return yield* bridgeAccountNotice()
     yield* Effect.orDie(loginEffect(args.url ?? defaultConsoleUrl))
   }),
 })
@@ -200,6 +208,7 @@ export const LogoutCommand = effectCmd({
     }),
   handler: Effect.fn("Cli.account.logout")(function* (args) {
     UI.empty()
+    if (remaBridgeModeEnabled()) return yield* bridgeAccountNotice()
     yield* Effect.orDie(logoutEffect(args.email))
   }),
 })
@@ -210,6 +219,7 @@ export const SwitchCommand = effectCmd({
   instance: false,
   handler: Effect.fn("Cli.account.switch")(function* () {
     UI.empty()
+    if (remaBridgeModeEnabled()) return yield* bridgeAccountNotice()
     yield* Effect.orDie(switchEffect())
   }),
 })
@@ -220,6 +230,7 @@ export const OrgsCommand = effectCmd({
   instance: false,
   handler: Effect.fn("Cli.account.orgs")(function* () {
     UI.empty()
+    if (remaBridgeModeEnabled()) return yield* bridgeAccountNotice()
     yield* Effect.orDie(orgsEffect())
   }),
 })
@@ -230,6 +241,7 @@ export const OpenCommand = effectCmd({
   instance: false,
   handler: Effect.fn("Cli.account.open")(function* () {
     UI.empty()
+    if (remaBridgeModeEnabled()) return yield* bridgeAccountNotice()
     yield* Effect.orDie(openEffect())
   }),
 })

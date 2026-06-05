@@ -344,6 +344,72 @@ it.instance("defaultModel returns first available model when no config set", () 
   }),
 )
 
+it.instance("Rema bridge mode registers the virtual Rema provider and model", () =>
+  Effect.gen(function* () {
+    yield* setProcessEnv("REMA_TRANSPORT", "bridge")
+    const providers = yield* list
+    expect(providers[ProviderV2.ID.make("rema")]).toBeDefined()
+    expect(providers[ProviderV2.ID.make("rema")].name).toBe("Rema")
+    expect(providers[ProviderV2.ID.make("rema")].models[ProviderV2.ModelID.make("rema-agent")]).toBeDefined()
+  }),
+)
+
+it.instance("Rema bridge mode defaults to the virtual Rema model", () =>
+  Effect.gen(function* () {
+    yield* setProcessEnv("OPENCODE_REMA_TRANSPORT", "bridge")
+    const model = yield* Provider.use.defaultModel()
+    expect(String(model.providerID)).toBe("rema")
+    expect(String(model.modelID)).toBe("rema-agent")
+  }),
+)
+
+it.instance(
+  "Rema bridge mode overrides an explicit config model",
+  Effect.gen(function* () {
+    yield* setProcessEnv("REMA_TRANSPORT", "bridge")
+    yield* setProcessEnv("ANTHROPIC_API_KEY", "test-api-key")
+    const model = yield* Provider.use.defaultModel()
+    expect(String(model.providerID)).toBe("rema")
+    expect(String(model.modelID)).toBe("rema-agent")
+  }),
+  { config: { model: "anthropic/claude-sonnet-4-20250514" } },
+)
+
+it.instance(
+  "Rema bridge mode ignores enabled_providers filtering for the virtual model",
+  Effect.gen(function* () {
+    yield* setProcessEnv("REMA_TRANSPORT", "bridge")
+    const providers = yield* list
+    const model = yield* Provider.use.defaultModel()
+    expect(providers[ProviderV2.ID.make("rema")]).toBeDefined()
+    expect(String(model.providerID)).toBe("rema")
+    expect(String(model.modelID)).toBe("rema-agent")
+  }),
+  { config: { enabled_providers: ["anthropic"] } },
+)
+
+it.instance(
+  "Rema bridge mode ignores disabled_providers filtering for the virtual model",
+  Effect.gen(function* () {
+    yield* setProcessEnv("REMA_TRANSPORT", "bridge")
+    const providers = yield* list
+    const model = yield* Provider.use.defaultModel()
+    expect(providers[ProviderV2.ID.make("rema")]).toBeDefined()
+    expect(String(model.providerID)).toBe("rema")
+    expect(String(model.modelID)).toBe("rema-agent")
+  }),
+  { config: { disabled_providers: ["rema"] } },
+)
+
+it.instance("Rema provider is not registered outside bridge mode", () =>
+  Effect.gen(function* () {
+    yield* remove("REMA_TRANSPORT")
+    yield* remove("OPENCODE_REMA_TRANSPORT")
+    const providers = yield* list
+    expect(providers[ProviderV2.ID.make("rema")]).toBeUndefined()
+  }),
+)
+
 it.instance(
   "defaultModel respects config model setting",
   Effect.gen(function* () {

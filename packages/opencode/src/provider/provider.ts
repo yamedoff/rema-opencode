@@ -33,6 +33,12 @@ import { ProviderError } from "./error"
 
 const log = Log.create({ service: "provider" })
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 10_000
+const REMA_PROVIDER_ID = ProviderV2.ID.make("rema")
+const REMA_MODEL_ID = ProviderV2.ModelID.make("rema-agent")
+
+function remaBridgeTransportEnabled() {
+  return process.env.REMA_TRANSPORT === "bridge" || process.env.OPENCODE_REMA_TRANSPORT === "bridge"
+}
 
 function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   if (typeof ms !== "number" || ms <= 0) return res
@@ -1118,6 +1124,70 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
   }
 }
 
+function createRemaBridgeProvider(): Info {
+  const model: Model = {
+    id: REMA_MODEL_ID,
+    providerID: REMA_PROVIDER_ID,
+    name: "Rema AgentOS Workflow",
+    family: "Rema",
+    api: {
+      id: "rema-agent",
+      url: "",
+      npm: "@ai-sdk/openai-compatible",
+    },
+    status: "active",
+    headers: {},
+    options: {},
+    cost: {
+      input: 0,
+      output: 0,
+      cache: {
+        read: 0,
+        write: 0,
+      },
+    },
+    limit: {
+      context: 200_000,
+      output: 16_000,
+    },
+    capabilities: {
+      temperature: false,
+      reasoning: false,
+      attachment: false,
+      toolcall: true,
+      input: {
+        text: true,
+        audio: false,
+        image: false,
+        video: false,
+        pdf: false,
+      },
+      output: {
+        text: true,
+        audio: false,
+        image: false,
+        video: false,
+        pdf: false,
+      },
+      interleaved: false,
+    },
+    release_date: "2026-06-04",
+    variants: {},
+  }
+  model.variants = mapValues(ProviderTransform.variants(model), (v) => v)
+
+  return {
+    id: REMA_PROVIDER_ID,
+    name: "Rema",
+    source: "custom",
+    env: [],
+    options: {},
+    models: {
+      [REMA_MODEL_ID]: model,
+    },
+  }
+}
+
 export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
   const models: Record<string, Model> = {}
   for (const [key, model] of Object.entries(provider.models)) {
@@ -1244,9 +1314,19 @@ export const layer = Layer.effect(
         const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
 
         function isProviderAllowed(providerID: ProviderV2.ID): boolean {
+          if (remaBridgeTransportEnabled() && providerID === REMA_PROVIDER_ID) return true
           if (enabled && !enabled.has(providerID)) return false
           if (disabled.has(providerID)) return false
           return true
+        }
+
+        // Bridge mode bypasses AI SDK provider calls in the LLM layer, but the
+        // rest of OpenCode still needs a selectable provider/model reference.
+        if (remaBridgeTransportEnabled()) {
+          const provider = createRemaBridgeProvider()
+          catalog[REMA_PROVIDER_ID] = toPublicInfo(provider)
+          database[REMA_PROVIDER_ID] = toPublicInfo(provider)
+          providers[REMA_PROVIDER_ID] = toPublicInfo(provider)
         }
 
         for (const hook of plugins) {
@@ -1824,9 +1904,16 @@ export const layer = Layer.effect(
 
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
+      const s = yield* InstanceState.get(state)
+      if (remaBridgeTransportEnabled() && s.providers[REMA_PROVIDER_ID]?.models[REMA_MODEL_ID]) {
+        return {
+          providerID: REMA_PROVIDER_ID,
+          modelID: REMA_MODEL_ID,
+        }
+      }
+
       if (cfg.model) return parseModel(cfg.model)
 
-      const s = yield* InstanceState.get(state)
       const recent = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(
         Effect.map((x): { providerID: ProviderV2.ID; modelID: ProviderV2.ModelID }[] => {
           if (!isRecord(x) || !Array.isArray(x.recent)) return []

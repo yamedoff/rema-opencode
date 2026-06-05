@@ -23,16 +23,22 @@ import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { REMA_MODEL_REF, remaBridgeModeEnabled, remaModelSelection } from "./rema-mode"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
 function pick(value: string | undefined): ModelInput | undefined {
+  if (remaBridgeModeEnabled()) return remaModelSelection() as ModelInput
   if (!value) return undefined
   const [providerID, ...rest] = value.split("/")
   return {
     providerID,
     modelID: rest.join("/"),
   } as ModelInput
+}
+
+function pickCommandModel(value: string | undefined) {
+  return remaBridgeModeEnabled() ? REMA_MODEL_REF : value
 }
 
 function resolveRunInput(value?: string, piped?: string): string | undefined {
@@ -771,7 +777,7 @@ export const RunCommand = effectCmd({
             const result = await client.session.command({
               sessionID,
               agent,
-              model: args.model,
+              model: pickCommandModel(args.model),
               command: args.command,
               arguments: message,
               variant: args.variant,

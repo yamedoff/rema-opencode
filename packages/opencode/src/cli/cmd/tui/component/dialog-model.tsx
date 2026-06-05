@@ -8,6 +8,7 @@ import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
 import { DialogVariant } from "./dialog-variant"
 import * as fuzzysort from "fuzzysort"
 import { useConnected } from "./use-connected"
+import { REMA_PROVIDER_ID, REMA_MODEL_ID, remaBridgeModeEnabled } from "../../rema-mode"
 
 export function DialogModel(props: { providerID?: string }) {
   const local = useLocal()
@@ -18,7 +19,8 @@ export function DialogModel(props: { providerID?: string }) {
   const connected = useConnected()
   const providers = createDialogProviderOptions()
 
-  const showExtra = createMemo(() => connected() && !props.providerID)
+  const bridgeMode = createMemo(() => remaBridgeModeEnabled())
+  const showExtra = createMemo(() => connected() && !props.providerID && !bridgeMode())
 
   const options = createMemo(() => {
     const needle = query().trim()
@@ -60,6 +62,7 @@ export function DialogModel(props: { providerID?: string }) {
 
     const providerOptions = pipe(
       sync.data.provider,
+      filter((provider) => !bridgeMode() || provider.id === REMA_PROVIDER_ID),
       sortBy(
         (provider) => provider.id !== "opencode",
         (provider) => provider.name,
@@ -70,6 +73,7 @@ export function DialogModel(props: { providerID?: string }) {
           entries(),
           filter(([_, info]) => info.status !== "deprecated"),
           filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
+          filter(([model]) => !bridgeMode() || model === REMA_MODEL_ID),
           map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },
             title: info.name ?? model,
@@ -97,7 +101,7 @@ export function DialogModel(props: { providerID?: string }) {
       ),
     )
 
-    const popularProviders = !connected()
+    const popularProviders = !connected() && !bridgeMode()
       ? pipe(
           providers(),
           map((option) => ({
@@ -147,13 +151,17 @@ export function DialogModel(props: { providerID?: string }) {
     <DialogSelect<ReturnType<typeof options>[number]["value"]>
       options={options()}
       actions={[
-        {
-          command: "model.dialog.provider",
-          title: connected() ? "Connect provider" : "View all providers",
-          onTrigger() {
-            dialog.replace(() => <DialogProvider />)
-          },
-        },
+        ...(bridgeMode()
+          ? []
+          : [
+              {
+                command: "model.dialog.provider",
+                title: connected() ? "Connect provider" : "View all providers",
+                onTrigger() {
+                  dialog.replace(() => <DialogProvider />)
+                },
+              },
+            ]),
         {
           command: "model.dialog.favorite",
           title: "Favorite",
