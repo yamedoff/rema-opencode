@@ -375,6 +375,32 @@ it.instance(
   { config: { model: "anthropic/claude-sonnet-4-20250514" } },
 )
 
+it.instance(
+  "Rema bridge mode ignores enabled_providers filtering for the virtual model",
+  Effect.gen(function* () {
+    yield* setProcessEnv("REMA_TRANSPORT", "bridge")
+    const providers = yield* list
+    const model = yield* Provider.use.defaultModel()
+    expect(providers[ProviderV2.ID.make("rema")]).toBeDefined()
+    expect(String(model.providerID)).toBe("rema")
+    expect(String(model.modelID)).toBe("rema-agent")
+  }),
+  { config: { enabled_providers: ["anthropic"] } },
+)
+
+it.instance(
+  "Rema bridge mode ignores disabled_providers filtering for the virtual model",
+  Effect.gen(function* () {
+    yield* setProcessEnv("REMA_TRANSPORT", "bridge")
+    const providers = yield* list
+    const model = yield* Provider.use.defaultModel()
+    expect(providers[ProviderV2.ID.make("rema")]).toBeDefined()
+    expect(String(model.providerID)).toBe("rema")
+    expect(String(model.modelID)).toBe("rema-agent")
+  }),
+  { config: { disabled_providers: ["rema"] } },
+)
+
 it.instance("Rema provider is not registered outside bridge mode", () =>
   Effect.gen(function* () {
     yield* remove("REMA_TRANSPORT")

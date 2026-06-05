@@ -168,6 +168,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       const fallbackModel = createMemo(() => {
         const remaModel = remaBridgeModel()
         if (remaModel) return remaModel
+        if (remaBridgeModeEnabled()) return undefined
 
         if (args.model) {
           const { providerID, modelID } = parseModel(args.model)
@@ -208,6 +209,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       })
 
       const currentModel = createMemo(() => {
+        if (remaBridgeModeEnabled()) return remaBridgeModel()
         const a = agent.current()
         return (
           getFirstValidModel(

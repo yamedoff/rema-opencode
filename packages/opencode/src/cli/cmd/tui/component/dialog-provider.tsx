@@ -1,6 +1,6 @@
 import { createMemo, createSignal, onMount, Show } from "solid-js"
 import { useSync } from "@tui/context/sync"
-import { filter, map, pipe, sortBy } from "remeda"
+import { map, pipe, sortBy } from "remeda"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useDialog } from "@tui/ui/dialog"
 import { useSDK } from "../context/sdk"
@@ -81,6 +81,11 @@ export function normalizeCustomProviderID(value: string) {
   return providerID
 }
 
+export function bridgeProviderOptions(options: ProviderOption[], bridgeMode: boolean) {
+  if (!bridgeMode) return options
+  return options.filter((provider) => provider.type === "provider" && provider.providerID === REMA_PROVIDER_ID)
+}
+
 export function createDialogProviderOptions() {
   const sync = useSync()
   const dialog = useDialog()
@@ -114,11 +119,7 @@ export function createDialogProviderOptions() {
 
   const options = createMemo(() => {
     return pipe(
-      providerOptions(sync.data.provider_next.all),
-      filter(
-        (provider) =>
-          !remaBridgeModeEnabled() || (provider.type === "provider" && provider.providerID === REMA_PROVIDER_ID),
-      ),
+      bridgeProviderOptions(providerOptions(sync.data.provider_next.all), remaBridgeModeEnabled()),
       map((provider) => {
         if (provider.type === "custom") {
           return {

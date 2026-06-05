@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { normalizeCustomProviderID, providerOptions } from "../../../../src/cli/cmd/tui/component/dialog-provider"
+import {
+  bridgeProviderOptions,
+  normalizeCustomProviderID,
+  providerOptions,
+} from "../../../../src/cli/cmd/tui/component/dialog-provider"
 
 describe("providerOptions", () => {
   test("includes a synthetic Other option for custom providers", () => {
@@ -25,5 +29,22 @@ describe("providerOptions", () => {
     expect(normalizeCustomProviderID("@ai-sdk/custom-provider")).toBe("custom-provider")
     expect(normalizeCustomProviderID("-custom-provider")).toBeUndefined()
     expect(normalizeCustomProviderID("Custom Provider")).toBeUndefined()
+  })
+
+  test("bridge mode only exposes the Rema provider option", () => {
+    const options = providerOptions([
+      { id: "openai", name: "OpenAI" },
+      { id: "rema", name: "Rema" },
+      { id: "anthropic", name: "Anthropic" },
+    ])
+
+    const bridgeOptions = bridgeProviderOptions(options, true)
+    expect(bridgeOptions).toHaveLength(1)
+    expect(bridgeOptions[0]).toMatchObject({
+      type: "provider",
+      providerID: "rema",
+      title: "Rema",
+    })
+    expect(bridgeProviderOptions(options, false)).toHaveLength(options.length)
   })
 })

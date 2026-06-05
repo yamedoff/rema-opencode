@@ -1314,6 +1314,7 @@ export const layer = Layer.effect(
         const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
 
         function isProviderAllowed(providerID: ProviderV2.ID): boolean {
+          if (remaBridgeTransportEnabled() && providerID === REMA_PROVIDER_ID) return true
           if (enabled && !enabled.has(providerID)) return false
           if (disabled.has(providerID)) return false
           return true
@@ -1321,7 +1322,7 @@ export const layer = Layer.effect(
 
         // Bridge mode bypasses AI SDK provider calls in the LLM layer, but the
         // rest of OpenCode still needs a selectable provider/model reference.
-        if (remaBridgeTransportEnabled() && isProviderAllowed(REMA_PROVIDER_ID)) {
+        if (remaBridgeTransportEnabled()) {
           const provider = createRemaBridgeProvider()
           catalog[REMA_PROVIDER_ID] = toPublicInfo(provider)
           database[REMA_PROVIDER_ID] = toPublicInfo(provider)
