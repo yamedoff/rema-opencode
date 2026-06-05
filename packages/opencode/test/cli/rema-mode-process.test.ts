@@ -36,8 +36,7 @@ describe("Rema bridge CLI command guards", () => {
       Effect.gen(function* () {
         const result = yield* opencode.spawn(["models", "--refresh"], { env: BRIDGE_ENV })
         opencode.expectExit(result, 0, "models --refresh")
-        expect(result.stdout).toContain(REMA_MODEL_REF)
-        expect(result.stdout).toContain("Rema bridge mode uses Rema-managed models.")
+        expect(result.stdout.trim()).toBe(REMA_MODEL_REF)
         expect(result.stdout).not.toContain("Models cache refreshed")
       }),
     60_000,
