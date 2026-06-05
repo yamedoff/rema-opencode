@@ -1,6 +1,6 @@
 import { createMemo, createSignal, onMount, Show } from "solid-js"
 import { useSync } from "@tui/context/sync"
-import { map, pipe, sortBy } from "remeda"
+import { filter, map, pipe, sortBy } from "remeda"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useDialog } from "@tui/ui/dialog"
 import { useSDK } from "../context/sdk"
@@ -115,6 +115,10 @@ export function createDialogProviderOptions() {
   const options = createMemo(() => {
     return pipe(
       providerOptions(sync.data.provider_next.all),
+      filter(
+        (provider) =>
+          !remaBridgeModeEnabled() || (provider.type === "provider" && provider.providerID === REMA_PROVIDER_ID),
+      ),
       map((provider) => {
         if (provider.type === "custom") {
           return {
